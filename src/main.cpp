@@ -70,6 +70,8 @@ int The_Bat_All_Clear = -1;
 
 byte The_Bat_Trigger = 75;
 
+bool The_Bat_State = false;
+
 
 // ------------------------------------------------------------ Echo() ------------------------------------------------------------
 #define Echo_Pin_Trigger D5
@@ -114,36 +116,34 @@ void The_Bat() {
     The_Bat_All_Clear = Distance;
   }
 
-  else if (Distance         Distance != The_Bat_Last_Mesure) {
+  // Trigger check
+  else if (The_Bat_All_Clear - Distance > The_Bat_Trigger) {
 
-    // Distance is smaller than = ON
-    if (Distance < The_Bat_Last_Mesure) {
-      if (The_Bat_Last_Mesure - Distance > The_Bat_Trigger) {
+    if (The_Bat_State != true) {
 
-        String Topic = The_Bat_Target_ON.substring(0, The_Bat_Target_ON.indexOf("&"));
-        String Payload = The_Bat_Target_ON.substring(The_Bat_Target_ON.indexOf("&") + 1, The_Bat_Target_ON.length());
+      String Topic = The_Bat_Target_ON.substring(0, The_Bat_Target_ON.indexOf("&"));
+      String Payload = The_Bat_Target_ON.substring(The_Bat_Target_ON.indexOf("&") + 1, The_Bat_Target_ON.length());
 
-        MQTT_Client.publish(Topic.c_str(), 0, false, Payload.c_str());
+      MQTT_Client.publish(Topic.c_str(), 0, false, Payload.c_str());
 
-        Serial.println("Lights ON");
-      }
+      The_Bat_State = true;
+
+      Serial.println("Lights ON");
     }
-
-    // Distance is larger than = OFF
-    if (Distance > The_Bat_Last_Mesure) {
-      if (Distance - The_Bat_Last_Mesure > The_Bat_Trigger) {
-        String Topic = The_Bat_Target_OFF.substring(0, The_Bat_Target_OFF.indexOf("&"));
-        String Payload = The_Bat_Target_OFF.substring(The_Bat_Target_OFF.indexOf("&") + 1, The_Bat_Target_OFF.length());
-
-        MQTT_Client.publish(Topic.c_str(), 0, false, Payload.c_str());
-
-        Serial.println("Lights OFF");
-      }
-    }
-
   }
 
-  The_Bat_Last_Mesure = Distance;
+  else if (The_Bat_State == true) {
+
+    String Topic = The_Bat_Target_OFF.substring(0, The_Bat_Target_OFF.indexOf("&"));
+    String Payload = The_Bat_Target_OFF.substring(The_Bat_Target_OFF.indexOf("&") + 1, The_Bat_Target_OFF.length());
+
+    MQTT_Client.publish(Topic.c_str(), 0, false, Payload.c_str());
+
+    Serial.println("Lights OFF");
+
+    The_Bat_State = false;
+  }
+
 } // The_Bat()
 
 
@@ -373,6 +373,14 @@ void MQTT_Settings(String Topic, String Payload) {
       The_Bat_Target_OFF = Payload;
 
       Serial.println("The_Bat_Target_OFF change to: " + The_Bat_Target_OFF);
+  } // TheBatTargetOFF
+
+  // ------------------------------ TheBatTrigger ------------------------------
+    else if (Topic.indexOf("TheBatTrigger") != -1) {
+
+      The_Bat_Trigger = Payload.toInt();
+
+      Serial.println("TheBatTrigger change to: " + The_Bat_Target_OFF);
   } // TheBatTargetOFF
 
 
