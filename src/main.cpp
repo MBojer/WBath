@@ -8,6 +8,13 @@ extern "C" {
 bool ArduinoOTA_Active = false;
 
 
+// ---------------------------------------- Relay ----------------------------------------
+const int Relay_Number_Of = 1;
+const int Relay_Pin[Relay_Number_Of] {D1};
+
+bool Relay_On_State = HIGH;
+
+
 // ------------------------------------------------------------ WiFi ------------------------------------------------------------
 #include <ESP8266WiFi.h>
 #include <ESP8266mDNS.h>
@@ -44,13 +51,157 @@ const char* MQTT_Password = "NoSinking";
 Ticker MQTT_KeepAlive_Ticker;
 unsigned long MQTT_KeepAlive_Delay = 60000;
 
-const byte MQTT_Subscribe_Topic_Number_Of = 2;
-String MQTT_Subscribe_Topic[MQTT_Subscribe_Topic_Number_Of] = {"/Boat/Settings/" + WiFi_Hostname + "/#", "/Boat/System/" + WiFi_Hostname};
+const byte MQTT_Subscribe_Topic_Number_Of = 4;
+String MQTT_Subscribe_Topic[MQTT_Subscribe_Topic_Number_Of] = {"/Boat/Settings/" + WiFi_Hostname + "/#", "/Boat/System/" + WiFi_Hostname, "/Boat/All", "/Boat/Relay/" + WiFi_Hostname};
+
+#define BoatAll 2
+#define BoatRelayHostname 3
 
 #define MQTT_Reconnect_Delay 2 // in secounds
 
 #define MQTT_Boot_Wait_For_Connection 15000
 
+
+// ------------------------------------------------------------ The_Bat() ------------------------------------------------------------
+Ticker The_Bat_Ticker;
+unsigned long The_Bat_Delay = 750;
+
+int The_Bat_All_Clear = -1;
+
+byte The_Bat_Trigger = 75;
+
+
+// ------------------------------------------------------------ Echo() ------------------------------------------------------------
+#define Echo_Pin_Trigger D5
+#define Echo_Pin_Echo D6
+
+String The_Bat_Target_ON = String(MQTT_Subscribe_Topic[1]) + "The_Bat_Target_ON setting";
+String The_Bat_Target_OFF = String(MQTT_Subscribe_Topic[1]) + "The_Bat_Target_OFF setting";
+
+
+
+// ############################################################ Echo() ############################################################
+int Echo() {
+
+  // Clears the Echo_Pin_Trigger
+  digitalWrite(Echo_Pin_Trigger, LOW);
+  delayMicroseconds(2);
+
+  // Sets the Echo_Pin_Trigger on HIGH state for 10 micro seconds
+  digitalWrite(Echo_Pin_Trigger, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(Echo_Pin_Trigger, LOW);
+
+  // Reads the Echo_Pin_Echo, returns the sound wave travel time in microseconds
+  long Duration = pulseIn(Echo_Pin_Echo, HIGH);
+
+  // Calculating the distance
+  int Distance = Duration *0.034 / 2;
+
+  return Distance;
+
+} // Echo
+
+
+
+// ############################################################ The_Bat() ############################################################
+void The_Bat() {
+
+  int Distance = Echo();
+
+  // Reset All Clear (Boot)
+  if (The_Bat_All_Clear == -1) {
+    The_Bat_All_Clear = Distance;
+  }
+
+  else if (Distance         Distance != The_Bat_Last_Mesure) {
+
+    // Distance is smaller than = ON
+    if (Distance < The_Bat_Last_Mesure) {
+      if (The_Bat_Last_Mesure - Distance > The_Bat_Trigger) {
+
+        String Topic = The_Bat_Target_ON.substring(0, The_Bat_Target_ON.indexOf("&"));
+        String Payload = The_Bat_Target_ON.substring(The_Bat_Target_ON.indexOf("&") + 1, The_Bat_Target_ON.length());
+
+        MQTT_Client.publish(Topic.c_str(), 0, false, Payload.c_str());
+
+        Serial.println("Lights ON");
+      }
+    }
+
+    // Distance is larger than = OFF
+    if (Distance > The_Bat_Last_Mesure) {
+      if (Distance - The_Bat_Last_Mesure > The_Bat_Trigger) {
+        String Topic = The_Bat_Target_OFF.substring(0, The_Bat_Target_OFF.indexOf("&"));
+        String Payload = The_Bat_Target_OFF.substring(The_Bat_Target_OFF.indexOf("&") + 1, The_Bat_Target_OFF.length());
+
+        MQTT_Client.publish(Topic.c_str(), 0, false, Payload.c_str());
+
+        Serial.println("Lights OFF");
+      }
+    }
+
+  }
+
+  The_Bat_Last_Mesure = Distance;
+} // The_Bat()
+
+
+
+// ############################################################ Relay() ############################################################
+void Relay(String Topic, String Payload) {
+
+  if (Topic == MQTT_Subscribe_Topic[BoatAll]) {
+    if (Payload.indexOf("Relay-OFF") != -1) {
+      Serial.println("Relay - All OFF");
+      for (int i = 0; i < Relay_Number_Of; i++) {
+        if (digitalRead(Relay_Pin[i]) != !Relay_On_State) {
+          digitalWrite(Relay_Pin[i], !Relay_On_State);
+          Serial.println("Relay " + String(i + 1) + " changed state to: OFF");
+          MQTT_Client.publish(MQTT_Subscribe_Topic[3].c_str(), 0, false, String("S-" + String(i + 1) + "-OFF").c_str());
+        }
+      }
+    }
+  }
+
+
+  else if (Topic == MQTT_Subscribe_Topic[BoatRelayHostname]) {
+    byte Selected_Relay = Payload.substring(0, Payload.indexOf("-")).toInt();
+    // Ignore all requests thats larger then Relay_Number_Of
+    if (Selected_Relay > Relay_Number_Of);
+
+    // State request
+    else if (Payload.indexOf("-?") != -1) {
+      String State_String = "S-" + String(Selected_Relay) + "-";
+      if (digitalRead(Selected_Relay) == Relay_On_State) State_String += "ON";
+      else State_String += "OFF";
+      MQTT_Client.publish(MQTT_Subscribe_Topic[3].c_str(), 0, false, State_String.c_str());
+    }
+
+    else if (Payload.indexOf("S-") == -1) {
+
+      String State = Payload.substring(Payload.indexOf("-") + 1, Payload.length());
+
+      bool State_Digital;
+      if (State == "ON") State_Digital = Relay_On_State;
+      else if (State == "OFF") State_Digital = !Relay_On_State;
+      else if (State == "FLIP") State_Digital = !digitalRead(Relay_Pin[Selected_Relay - 1]);
+
+      if (Selected_Relay <= Relay_Number_Of && digitalRead(Relay_Pin[Selected_Relay - 1]) != State_Digital) {
+        digitalWrite(Relay_Pin[Selected_Relay - 1], State_Digital);
+        Serial.print("Relay " + String(Selected_Relay) + " changed state to: ");
+        if (State_Digital == Relay_On_State) {
+          MQTT_Client.publish(MQTT_Subscribe_Topic[3].c_str(), 0, false, String("S-" + String(Selected_Relay) + "-ON").c_str());
+          Serial.println("ON");
+        }
+        else {
+          Serial.println("OFF");
+          MQTT_Client.publish(MQTT_Subscribe_Topic[3].c_str(), 0, false, String("S-" + String(Selected_Relay) + "-OFF").c_str());
+        }
+      }
+    }
+  }
+} // Relay()
 
 
 // ############################################################ KillKillKill() ############################################################
@@ -208,6 +359,23 @@ void MQTT_Settings(String Topic, String Payload) {
   } // MQTTKeepAlive
 
 
+  // ------------------------------ TheBatTargetON ------------------------------
+    else if (Topic.indexOf("TheBatTargetON") != -1) {
+
+      The_Bat_Target_ON = Payload;
+
+      Serial.println("The_Bat_Target_ON change to: " + The_Bat_Target_ON);
+  } // TheBatTargetON
+
+  // ------------------------------ TheBatTargetOFF ------------------------------
+    else if (Topic.indexOf("TheBatTargetOFF") != -1) {
+
+      The_Bat_Target_OFF = Payload;
+
+      Serial.println("The_Bat_Target_OFF change to: " + The_Bat_Target_OFF);
+  } // TheBatTargetOFF
+
+
 } // MQTT_Settings
 
 
@@ -217,6 +385,8 @@ void onMqttMessage(char* topic, char* payload, AsyncMqttClientMessageProperties 
   if (ArduinoOTA_Active == true) return;
 
   MQTT_Settings(topic, payload);
+
+  Relay(topic, payload);
 
   KillKillKill(topic, payload);
 
@@ -244,6 +414,7 @@ void ArduinoOTA_Setup() {
     MQTT_Client.publish(String("/Boat/System/" + WiFi_Hostname).c_str(), 0, false, "ArduinoOTA ... Started");
     ArduinoOTA_Active = true;
     MQTT_KeepAlive_Ticker.detach();
+    The_Bat_Ticker.detach();
     String type;
     if (ArduinoOTA.getCommand() == U_FLASH) {
       type = "sketch";
@@ -296,7 +467,15 @@ void setup() {
   // ------------------------------ Pins ------------------------------
   Serial.println("Configuring pins");
 
+  // Relay
+  for (byte i = 0; i < Relay_Number_Of; i++) {
+    pinMode(Relay_Pin[i], OUTPUT);
+    digitalWrite(Relay_Pin[i], !Relay_On_State);
+  }
 
+  // Echo()
+  pinMode(Echo_Pin_Trigger, OUTPUT); // Sets the Echo_Pin_Trigger as an Output
+  pinMode(Echo_Pin_Echo, INPUT); // Sets the Echo_Pin_Echo as an Input
 
   // ------------------------------ MQTT ------------------------------
   MQTT_Client.onConnect(onMqttConnect);
@@ -334,6 +513,10 @@ void setup() {
   MQTT_KeepAlive_Ticker.attach_ms(MQTT_KeepAlive_Delay, MQTT_KeepAlive);
 
 
+  // ------------------------------ The Bat() ------------------------------
+  The_Bat_Ticker.attach_ms(The_Bat_Delay, The_Bat);
+
+
   // ------------------------------ Wait for MQTT ------------------------------
   unsigned long MQTT_Boot_Wait_Timeout_At = millis() + MQTT_Boot_Wait_For_Connection;
 
@@ -343,7 +526,6 @@ void setup() {
 
     delay(250);
   }
-
 
   // ------------------------------ Boot End ------------------------------
   MQTT_Client.publish(String("/Boat/System/" + WiFi_Hostname).c_str(), 0, false, String("Booting. Free Memory: " + String(system_get_free_heap_size())).c_str());
