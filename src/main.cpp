@@ -3,7 +3,6 @@ extern "C" {
   #include "user_interface.h"
 }
 
-
 // ---------------------------------------- ArduinoOTA_Setup() ----------------------------------------
 bool ArduinoOTA_Active = false;
 
@@ -49,7 +48,7 @@ String MQTT_Subscribe_Topic[MQTT_Subscribe_Topic_Number_Of] = {
       "/Boat/Settings/" + WiFi_Hostname + "/#",
       "/Boat/System/" + WiFi_Hostname,
       "/Boat/All",
-      "/Boat/Relay/" + WiFi_Hostname,
+      "/Boat/Relay/" + WiFi_Hostname + "/#",
       "/Boat/Commands/" + WiFi_Hostname + "/#"
     };
 
@@ -65,6 +64,10 @@ String MQTT_Subscribe_Topic[MQTT_Subscribe_Topic_Number_Of] = {
 
 
 // ---------------------------------------- Relay ----------------------------------------
+#define OFF 0
+#define ON 1
+#define FLIP 2
+
 const int Relay_Number_Of = 1;
 const int Relay_Pin[Relay_Number_Of] {D1};
 
@@ -72,20 +75,6 @@ bool Relay_On_State = HIGH;
 
 Ticker Relay_Auto_OFF_Ticker;
 unsigned long Relay_Auto_OFF_Timer = 20000;
-
-
-// ------------------------------------------------------------ The_Bat() ------------------------------------------------------------
-Ticker The_Bat_Ticker;
-unsigned long The_Bat_Delay = 750;
-
-int The_Bat_All_Clear = -1;
-
-byte The_Bat_Trigger = 75;
-
-bool The_Bat_State = false;
-
-String The_Bat_Target_ON = String(MQTT_Subscribe_Topic[Topic_System]) + "The_Bat_Target_ON setting";
-String The_Bat_Target_OFF = String(MQTT_Subscribe_Topic[Topic_System]) + "The_Bat_Target_OFF setting";
 
 
 // ------------------------------------------------------------ Echo() ------------------------------------------------------------
@@ -97,6 +86,30 @@ String The_Bat_Target_OFF = String(MQTT_Subscribe_Topic[Topic_System]) + "The_Ba
 Ticker ESP_Reboot_Ticker;
 
 
+// ------------------------------------------------------------ The_Bat() ------------------------------------------------------------
+#include "Statistic.h"
+
+Ticker The_Bat_Ticker;
+unsigned long The_Bat_Delay = 500;
+
+int The_Bat_All_Clear = -1;
+
+byte The_Bat_Trigger = 75;
+
+bool The_Bat_State = false;
+
+String The_Bat_Target_ON = String(MQTT_Subscribe_Topic[Topic_System]) + "&" + "The_Bat_Target_ON setting missing";
+String The_Bat_Target_OFF = String(MQTT_Subscribe_Topic[Topic_System]) + "&" + "The_Bat_Target_OFF setting missing";
+
+Statistic The_Bat_Stats;
+
+byte The_Bat_All_Clear_Mesurements = 10;
+
+
+// ------------------------------------------------------------ The_Bat_OFF() ------------------------------------------------------------
+Ticker The_Bat_OFF_Ticker;
+
+
 // ############################################################ ESP_Reboot() ############################################################
 void ESP_Reboot() {
 
@@ -106,6 +119,7 @@ void ESP_Reboot() {
   ESP.restart();
 
 } // ESP_Reboot()
+
 
 // ############################################################ Echo() ############################################################
 int Echo() {
@@ -120,44 +134,20 @@ int Echo() {
   digitalWrite(Echo_Pin_Trigger, LOW);
 
   // Reads the Echo_Pin_Echo, returns the sound wave travel time in microseconds
-  long Duration = pulseIn(Echo_Pin_Echo, HIGH);
+  float Duration = pulseIn(Echo_Pin_Echo, HIGH);
 
   // Calculating the distance
-  int Distance = Duration *0.034 / 2;
+  float Distance = (Duration / 2) * 0.0343;
+
+  if (Distance > 400) return -1;
 
   return Distance;
 
 } // Echo
 
 
-
-// ############################################################ The_Bat() ############################################################
-void The_Bat() {
-
-  int Distance = Echo();
-
-  // Reset All Clear (Boot)
-  if (The_Bat_All_Clear == -1) {
-    The_Bat_All_Clear = Distance;
-  }
-
-  // Trigger check
-  else if (The_Bat_All_Clear - Distance > The_Bat_Trigger) {
-
-    if (The_Bat_State != true) {
-
-      String Topic = The_Bat_Target_ON.substring(0, The_Bat_Target_ON.indexOf("&"));
-      String Payload = The_Bat_Target_ON.substring(The_Bat_Target_ON.indexOf("&") + 1, The_Bat_Target_ON.length());
-
-      MQTT_Client.publish(Topic.c_str(), 0, false, Payload.c_str());
-
-      The_Bat_State = true;
-
-      Serial.println("Lights ON");
-    }
-  }
-
-  else if (The_Bat_State == true) {
+// ############################################################ The_Bat_OFF() ############################################################
+void The_Bat_OFF() {
 
     String Topic = The_Bat_Target_OFF.substring(0, The_Bat_Target_OFF.indexOf("&"));
     String Payload = The_Bat_Target_OFF.substring(The_Bat_Target_OFF.indexOf("&") + 1, The_Bat_Target_OFF.length());
@@ -167,6 +157,52 @@ void The_Bat() {
     Serial.println("Lights OFF");
 
     The_Bat_State = false;
+
+    The_Bat_OFF_Ticker.detach();
+
+} // The_Bat_OFF
+
+
+// ############################################################ The_Bat() ############################################################
+void The_Bat() {
+
+  int Distance = Echo();
+
+  // Reset All Clear (Boot)
+  if (The_Bat_All_Clear == -1) {
+
+    The_Bat_Stats.add(Distance);
+
+    if (The_Bat_Stats.count() == The_Bat_All_Clear_Mesurements) {
+      The_Bat_All_Clear = The_Bat_Stats.minimum();
+      MQTT_Client.publish(MQTT_Subscribe_Topic[Topic_System].c_str(), 0, false, String("The Bat All Clear set to: " + String(The_Bat_All_Clear) + "cm").c_str()); // CHANGE ME
+      The_Bat_Stats.clear();
+    }
+  }
+
+  else if (Distance == -1) {
+    MQTT_Client.publish(MQTT_Subscribe_Topic[Topic_System].c_str(), 0, false, "The Bat - Echo mesure off");
+  }
+
+  // Trigger check
+  else if (Distance < The_Bat_All_Clear - The_Bat_Trigger) {
+
+    if (The_Bat_State != true) {
+
+      String Topic = The_Bat_Target_ON.substring(0, The_Bat_Target_ON.indexOf("&"));
+      String Payload = The_Bat_Target_ON.substring(The_Bat_Target_ON.indexOf("&") + 1, The_Bat_Target_ON.length());
+
+      MQTT_Client.publish(Topic.c_str(), 0, false, Payload.c_str());
+      MQTT_Client.publish("/Boat/Test", 0, false, String(Distance).c_str()); // rm
+
+      The_Bat_State = true;
+
+      Serial.println("Lights ON");
+
+    }
+
+    The_Bat_OFF_Ticker.once_ms(5000, The_Bat_OFF);
+
   }
 
 } // The_Bat()
@@ -182,9 +218,19 @@ void Relay_Auto_OFF() {
 } // Relay_Auto_OFF()
 
 
+boolean isValidNumber(String str){
+for(byte i=0;i<str.length();i++)
+{
+  if(isDigit(str.charAt(i))) return true;
+    }
+return false;
+}
+
+
 // ############################################################ Relay() ############################################################
 void Relay(String Topic, String Payload) {
 
+  // /Boat/ALL
   if (Topic == MQTT_Subscribe_Topic[Topic_All]) {
     if (Payload.indexOf("Relay-OFF") != -1) {
       Serial.println("Relay - All OFF");
@@ -193,46 +239,63 @@ void Relay(String Topic, String Payload) {
           digitalWrite(Relay_Pin[i], !Relay_On_State);
           Serial.println("Relay " + String(i + 1) + " changed state to: OFF");
           MQTT_Client.publish(MQTT_Subscribe_Topic[Topic_Relay].c_str(), 0, false, String("S-" + String(i + 1) + "-OFF").c_str());
+          return;
         }
       }
     }
   }
 
-  else if (Topic == MQTT_Subscribe_Topic[Topic_Relay]) {
-    byte Selected_Relay = Payload.substring(0, Payload.indexOf("-")).toInt();
-    // Ignore all requests thats larger then Relay_Number_Of
-    if (Selected_Relay > Relay_Number_Of);
+  else if (Topic.indexOf("/State") != -1)  {
+    // Ignore state publish from localhost
+    return;
+  }
 
-    // State request
-    else if (Payload.indexOf("-?") != -1) {
-      String State_String = "S-" + String(Selected_Relay) + "-";
-      if (digitalRead(Selected_Relay) == Relay_On_State) State_String += "ON";
-      else State_String += "OFF";
-      MQTT_Client.publish(MQTT_Subscribe_Topic[Topic_Relay].c_str(), 0, false, State_String.c_str());
+
+  else if (Topic.indexOf(MQTT_Subscribe_Topic[Topic_Relay].substring(0, MQTT_Subscribe_Topic[Topic_Relay].length() - 1)) != -1) {
+
+    String Relay_String = Topic;
+    // Relay_String.replace("#", "");
+    Relay_String.replace(MQTT_Subscribe_Topic[Topic_Relay].substring(0, MQTT_Subscribe_Topic[Topic_Relay].length() - 1), "");
+
+    byte Selected_Relay = Relay_String.toInt();
+
+    // Ignore all requests thats larger then Relay_Number_Of
+    if (Selected_Relay > Relay_Number_Of) {
+      // ADD invalid relay statement
     }
 
-    else if (Payload.indexOf("S-") == -1) {
+    // State request
+    else if (Payload.indexOf("?") != -1) {
+      String State_String;
+      if (digitalRead(Selected_Relay) == Relay_On_State) State_String += "1";
+      else State_String += "0";
+      MQTT_Client.publish(String(MQTT_Subscribe_Topic[Topic_Relay].substring(0, MQTT_Subscribe_Topic[Topic_Relay].length() - 1) + String(Selected_Relay) + "/State").c_str(), 0, false, State_String.c_str());
+      return;
+    }
 
-      String State = Payload.substring(Payload.indexOf("-") + 1, Payload.length());
+    else if(isValidNumber(Payload) == true) {
+        byte State = Payload.toInt();
 
-      bool State_Digital;
-      if (State == "ON") State_Digital = Relay_On_State;
-      else if (State == "OFF") State_Digital = !Relay_On_State;
-      else if (State == "FLIP") State_Digital = !digitalRead(Relay_Pin[Selected_Relay - 1]);
+        bool State_Digital;
+        if (State == ON) State_Digital = Relay_On_State;
+        else if (State == OFF) State_Digital = !Relay_On_State;
+        else if (State == FLIP) State_Digital = !digitalRead(Relay_Pin[Selected_Relay - 1]);
 
-      if (Selected_Relay <= Relay_Number_Of && digitalRead(Relay_Pin[Selected_Relay - 1]) != State_Digital) {
-        digitalWrite(Relay_Pin[Selected_Relay - 1], State_Digital);
-        Serial.print("Relay " + String(Selected_Relay) + " changed state to: ");
-        if (State_Digital == Relay_On_State) {
-          MQTT_Client.publish(MQTT_Subscribe_Topic[Topic_Relay].c_str(), 0, false, String("S-" + String(Selected_Relay) + "-ON").c_str());
-          Serial.println("ON");
-          Relay_Auto_OFF_Ticker.once_ms(Relay_Auto_OFF_Timer, Relay_Auto_OFF);
+        if (Selected_Relay <= Relay_Number_Of && digitalRead(Relay_Pin[Selected_Relay - 1]) != State_Digital) {
+          digitalWrite(Relay_Pin[Selected_Relay - 1], State_Digital);
+          Serial.print("Relay " + String(Selected_Relay) + " changed state to: ");
+          if (State_Digital == Relay_On_State) {
+            MQTT_Client.publish(String(MQTT_Subscribe_Topic[Topic_Relay].substring(0, MQTT_Subscribe_Topic[Topic_Relay].length() - 1) + String(Selected_Relay) + "/State").c_str(), 0, false, "1");
+            Serial.println("ON");
+            Relay_Auto_OFF_Ticker.once_ms(Relay_Auto_OFF_Timer, Relay_Auto_OFF);
+          }
+          else {
+            Serial.println("OFF");
+            MQTT_Client.publish(String(MQTT_Subscribe_Topic[Topic_Relay].substring(0, MQTT_Subscribe_Topic[Topic_Relay].length() - 1) + String(Selected_Relay) + "/State").c_str(), 0, false, "0");
+          }
         }
-        else {
-          Serial.println("OFF");
-          MQTT_Client.publish(MQTT_Subscribe_Topic[Topic_Relay].c_str(), 0, false, String("S-" + String(Selected_Relay) + "-OFF").c_str());
-        }
-      }
+
+
     }
   }
 } // Relay()
@@ -246,7 +309,7 @@ void Topic_Boat_All(String Topic, String Payload) {
     long Reboot_Delay = random(25000);
 
     MQTT_Client.publish(String("/Boat/System/" + WiFi_Hostname).c_str(), 0, false, String("Someone went on a killing spree, rebooting in " + String(Reboot_Delay) + " ...").c_str());
-    Serial.println("Someone went on a killing spree, rebooting in" + String(Reboot_Delay));
+    Serial.println("Someone went on a killing spree, rebooting in" + String(Reboot_Delay / 1000) + " secounds");
 
     ESP_Reboot_Ticker.once_ms(Reboot_Delay, ESP_Reboot);
   }
@@ -442,7 +505,6 @@ void MQTT_Commands(String Topic, String Payload) {
 } // MQTT_Settings()
 
 
-
 // ############################################################ onMqttMessage() ############################################################
 void onMqttMessage(char* topic, char* payload, AsyncMqttClientMessageProperties properties, size_t len, size_t index, size_t total) {
 
@@ -455,6 +517,7 @@ void onMqttMessage(char* topic, char* payload, AsyncMqttClientMessageProperties 
   MQTT_Commands(topic, payload);
 
 } // Settings
+
 
 // ############################################################ IPtoString() ############################################################
 String IPtoString(IPAddress IP_Address) {
@@ -577,10 +640,6 @@ void setup() {
   MQTT_KeepAlive_Ticker.attach_ms(MQTT_KeepAlive_Delay, MQTT_KeepAlive);
 
 
-  // ------------------------------ The Bat() ------------------------------
-  The_Bat_Ticker.attach_ms(The_Bat_Delay, The_Bat);
-
-
   // ------------------------------ Wait for MQTT ------------------------------
   unsigned long MQTT_Boot_Wait_Timeout_At = millis() + MQTT_Boot_Wait_For_Connection;
 
@@ -590,6 +649,12 @@ void setup() {
 
     delay(250);
   }
+
+  // ------------------------------ The Bat() ------------------------------
+  The_Bat_Stats.clear();
+
+  The_Bat_Ticker.attach_ms(The_Bat_Delay, The_Bat);
+
 
   // ------------------------------ Boot End ------------------------------
   MQTT_Client.publish(String("/Boat/System/" + WiFi_Hostname).c_str(), 0, false, String("Booting. Free Memory: " + String(system_get_free_heap_size())).c_str());
