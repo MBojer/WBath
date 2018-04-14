@@ -1,3 +1,6 @@
 [submodule "lib/W_Relay"]
 	path = lib/W_Relay
 	url = https://github.com/MBojer/W_Relay_Library.git
+[submodule "lib/MB_Queue"]
+	path = lib/MB_Queue
+	url = https://github.com/MBojer/MB_Queue.git

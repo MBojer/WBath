@@ -68,16 +68,6 @@ String MQTT_Subscribe_Topic[MQTT_Subscribe_Topic_Number_Of] = {
 W_Relay Relay(HIGH);
 
 
-// #define OFF 0
-// #define ON 1
-// #define FLIP 2
-//
-// const int Relay_Number_Of = 1;
-// const int Relay_Pin[Relay_Number_Of] {D1};
-//
-// bool Relay_On_State = HIGH;
-
-
 // ------------------------------------------------------------ Echo() ------------------------------------------------------------
 #define Echo_Pin_Trigger D5
 #define Echo_Pin_Echo D6
@@ -109,6 +99,16 @@ byte The_Bat_All_Clear_Mesurements = 10;
 
 // ------------------------------------------------------------ The_Bat_OFF() ------------------------------------------------------------
 Ticker The_Bat_OFF_Ticker;
+
+
+// ############################################################ Relay_MQTT_Send() ############################################################
+void Relay_MQTT_Send() {
+
+  if (Relay.MQTT_Send_Topic() != ";") {
+    MQTT_Client.publish(Relay.MQTT_Send_Topic(true).c_str(), 0, false, Relay.MQTT_Send_Payload(true).c_str());
+  }
+
+} // Relay_MQTT_Send()
 
 
 // ############################################################ ESP_Reboot() ############################################################
@@ -183,6 +183,8 @@ void The_Bat() {
 
   else if (Distance == -1) {
     MQTT_Client.publish(MQTT_Subscribe_Topic[Topic_System].c_str(), 0, false, "The Bat - Echo mesure off");
+    
+    The_Bat_OFF_Ticker.once_ms(5000, The_Bat_OFF);
   }
 
   // Trigger check
@@ -502,9 +504,10 @@ void setup() {
   Serial.println("W Relay");
 
   Relay.Set_Pins(D1);
+  Relay.Set_Auto_OFF_Relays(true);
+
   Relay.Set_Topics("/Boat/All", "/Boat/Relay/" + WiFi_Hostname);
 
-  // Relay.Set_Auto_OFF_Relays(true);
 
   // ------------------------------ Pins ------------------------------
   Serial.println("Configuring pins");
@@ -581,6 +584,8 @@ void loop() {
   }
   ArduinoOTA.handle();
 
-  // Relay.Relay_Auto_OFF();
+  Relay.Auto_OFF();
+
+  Relay_MQTT_Send();
 
 } // loop()
