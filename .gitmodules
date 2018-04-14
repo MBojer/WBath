@@ -1,0 +1,3 @@
+[submodule "lib/W_Relay"]
+	path = lib/W_Relay
+	url = https://github.com/MBojer/W_Relay_Library.git

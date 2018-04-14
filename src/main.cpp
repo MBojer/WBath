@@ -64,6 +64,8 @@ String MQTT_Subscribe_Topic[MQTT_Subscribe_Topic_Number_Of] = {
 
 
 // ---------------------------------------- Relay ----------------------------------------
+#include <W_Relay_h>
+
 #define OFF 0
 #define ON 1
 #define FLIP 2
