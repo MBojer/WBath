@@ -183,8 +183,8 @@ void The_Bat() {
 
   else if (Distance == -1) {
     MQTT_Client.publish(MQTT_Subscribe_Topic[Topic_System].c_str(), 0, false, "The Bat - Echo mesure off");
-    
-    The_Bat_OFF_Ticker.once_ms(5000, The_Bat_OFF);
+
+    The_Bat_OFF_Ticker.once_ms(5000, The_Bat_OFF); // TESTING TO SEE IF THIS SOLVES THE  OFF PROBLEM
   }
 
   // Trigger check
@@ -224,6 +224,7 @@ void Topic_Boat_All(String Topic, String Payload) {
   }
 
 } // Topic_All()
+
 
 // ############################################################ KillKillKill() ############################################################
 void KillKillKill() {
@@ -425,7 +426,7 @@ void onMqttMessage(char* topic, char* payload, AsyncMqttClientMessageProperties 
 
   MQTT_Commands(topic, payload);
 
-} // Settings
+} // onMqttMessage()
 
 
 // ############################################################ IPtoString() ############################################################
@@ -498,10 +499,11 @@ void setup() {
   // ------------------------------ Serial ------------------------------
   Serial.setTimeout(50);
   Serial.begin(115200);
+  Serial.println("");
 
 
   // ------------------------------ W_Relay ------------------------------
-  Serial.println("W Relay");
+  Serial.println("Configuring W Relay");
 
   Relay.Set_Pins(D1);
   Relay.Set_Auto_OFF_Relays(true);
